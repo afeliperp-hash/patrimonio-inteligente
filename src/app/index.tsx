@@ -1,98 +1,83 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { useState } from 'react';
+import { Alert, Button, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
+// Ferramentas do Firebase para adicionar dados
+import { addDoc, collection } from 'firebase/firestore';
+
+// O nosso ficheiro de ligação ao cofre
+import { db } from '../firebaseConfig';
+
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
 
 export default function HomeScreen() {
+  // Uma variável para sabermos se está a carregar (a gravar)
+  const [estaAGravar, setEstaAGravar] = useState(false);
+
+  // A função mágica que envia os dados para o Firebase
+  const gravarPrimeiraCategoria = async () => {
+    setEstaAGravar(true); // O botão vai mostrar que está a pensar...
+    
+    try {
+      // Aqui dizemos: "Vai ao banco de dados (db), na pasta 'categorias', e adiciona este documento"
+      await addDoc(collection(db, "categorias"), {
+        nome: "Alimentação",
+        tipo: "Despesa",
+        criadoEm: new Date()
+      });
+      
+      // Se der certo, mostra um alerta no telemóvel
+      Alert.alert("Sucesso!", "A categoria foi guardada no Firebase!");
+      
+    } catch (erro) {
+      console.error(erro);
+      Alert.alert("Erro", "Não foi possível gravar.");
+    } finally {
+      setEstaAGravar(false); // Volta o botão ao normal
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
+        
+        <ThemedText type="title" style={styles.title}>
+          Património Inteligente
         </ThemedText>
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+        <ThemedText style={styles.texto}>
+          O teu banco de dados está ligado! Clica no botão abaixo para testar o primeiro envio.
+        </ThemedText>
 
-        {Platform.OS === 'web' && <WebBadge />}
+        <Button 
+          title={estaAGravar ? "A gravar..." : "Criar Categoria 'Alimentação'"} 
+          onPress={gravarPrimeiraCategoria} 
+        />
+
       </SafeAreaView>
     </ThemedView>
   );
 }
 
+// O design do nosso ecrã
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
-    flexDirection: 'row',
+    padding: 20,
   },
   safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+    gap: 20,
   },
   title: {
     textAlign: 'center',
+    fontSize: 28,
   },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
+  texto: {
+    textAlign: 'center',
+    marginTop: 20,
+    marginBottom: 30,
+  }
 });

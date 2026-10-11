@@ -1,53 +1,113 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { Button, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Alert, Button, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Lancamento, TipoLancamento, TipoRecorrencia } from '@/types/lancamento';
-import { addDoc, collection } from 'firebase/firestore';
-// CORREÇÃO: Ajustado o caminho para apontar para a pasta constants conforme o seu print do VS Code
+import { addDoc, collection, deleteDoc, doc, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebaseConfig';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 
-const CATEGORIAS_RECEITA = ['Salário', 'Vendas', 'Investimentos', 'Outros'];
-const CATEGORIAS_DESPESA = ['Alimentação', 'Moradia', 'Transporte', 'Saúde', 'Lazer', 'Impostos', 'Outros'];
+// IMPORTAÇÃO DO CALENDÁRIO
+import DateTimePicker from '@react-native-community/datetimepicker';
+
+const CATEGORIAS_RECEITA_PADRAO = ['Salário', 'Vendas', 'Investimentos'];
+const CATEGORIAS_DESPESA_PADRAO = ['Alimentação', 'Moradia', 'Transporte', 'Saúde', 'Lazer', 'Impostos'];
 const CONTAS_BANCARIAS = ['Carteira', 'Nubank', 'Itaú', 'Inter', 'Bradesco'];
 const RECORRENCIAS = ['Nenhuma', 'Fixa (Mensal)', 'Parcelada'];
 
-function NovoLancamentoScreen() {
+export default function NovoLancamentoScreen() {
   const [tipo, setTipo] = useState<TipoLancamento>('despesa');
   const [descricao, setDescricao] = useState('');
   const [valor, setValor] = useState('');
   
   const [categoriaSelecionada, setCategoriaSelecionada] = useState('Outros');
+  const [novaCategoria, setNovaCategoria] = useState('');
+  const [categoriasFirebase, setCategoriasFirebase] = useState<any[]>([]);
   const [contaSelecionada, setContaSelecionada] = useState('Carteira');
   
   const hojeFormatoSimples = new Date().toLocaleDateString('pt-BR');
   const [dataVencimento, setDataVencimento] = useState(hojeFormatoSimples);
-  const [dataPagamento, setDataPagamento] = useState(hojeFormatoSimples);
+  const [dataPagamento, setDataPagamento] = useState(''); // COMEÇA VAZIO CONFORME PEDIDO
   const [estaPago, setEstaPago] = useState(true);
   
+  // ESTADOS DO CALENDÁRIO MOBILE
+  const [mostrarCalendarioVenc, setMostrarCalendarioVenc] = useState(false);
+  const [mostrarCalendarioPag, setMostrarCalendarioPag] = useState(false);
+
   const [recorrenciaSelecionada, setRecorrenciaSelecionada] = useState('Nenhuma');
   const [totalParcelas, setTotalParcelas] = useState('');
-
   const [linkComprovante, setLinkComprovante] = useState('');
   const [observacoes, setObservacoes] = useState('');
-
   const [carregando, setCarregando] = useState(false);
 
+  useEffect(() => {
+    const buscarCategorias = async () => {
+      try {
+        const q = query(collection(db, 'categorias'), where('tipo', '==', tipo));
+        const querySnapshot = await getDocs(q);
+        const cats = querySnapshot.docs.map(doc => ({ id: doc.id, nome: doc.data().nome }));
+        setCategoriasFirebase(cats);
+      } catch (error) {
+        console.error("Erro ao buscar categorias:", error);
+      }
+    };
+    buscarCategorias();
+  }, [tipo]);
+
+  const confirmarDeletarCategoria = (nomeCat: string) => {
+    const catDb = categoriasFirebase.find(c => c.nome === nomeCat);
+    if (!catDb) return; 
+
+    const apagar = async () => {
+      try {
+        await deleteDoc(doc(db, 'categorias', catDb.id));
+        setCategoriasFirebase(prev => prev.filter(c => c.id !== catDb.id));
+        if (categoriaSelecionada === nomeCat) setCategoriaSelecionada('Outros');
+      } catch (e) {
+        alert("Erro ao apagar categoria.");
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Deseja excluir a categoria '${nomeCat}'?`)) apagar();
+    } else {
+      Alert.alert("Excluir", `Deseja excluir a categoria '${nomeCat}'?`, [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Excluir", style: "destructive", onPress: apagar }
+      ]);
+    }
+  };
+
+  // MÁSCARA AUTOMÁTICA DE MOEDA (Ex: digita 150 -> 1,50)
+  const aplicarMascaraMoeda = (texto: string) => {
+    let apenasNumeros = texto.replace(/\D/g, ''); // Remove tudo que não é número
+    if (apenasNumeros === '') {
+      setValor('');
+      return;
+    }
+    // Converte para decimal (dividindo por 100)
+    let valorDecimal = (parseInt(apenasNumeros, 10) / 100).toFixed(2);
+    // Troca ponto por vírgula e aplica os pontos de milhar
+    let valorFormatado = valorDecimal.replace('.', ',');
+    valorFormatado = valorFormatado.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1.');
+    setValor(valorFormatado);
+  };
+
   const salvarLancamento = async () => {
-    // 1. Verificação inicial
     if (descricao === '' || valor === '') {
       alert("Por favor, preencha a descrição e o valor.");
       return;
     }
 
-    setCarregando(true);
-    console.log("A preparar os dados...");
+    if (estaPago && dataPagamento === '') {
+      alert("Por favor, preencha a Data do Pagamento Efetivo ou desmarque a opção 'Pago'.");
+      return;
+    }
 
-    // 2. Limpeza do Valor (Transformar "1.450,50" em número real para o Firebase)
+    setCarregando(true);
     let valorLimpo = valor.replace(/\./g, '').replace(',', '.');
     const valorNumerico = parseFloat(valorLimpo);
 
@@ -57,47 +117,58 @@ function NovoLancamentoScreen() {
       return;
     }
 
-    // 3. Preparar a Recorrência
     let tipoRec: TipoRecorrencia = 'nenhuma';
     if (recorrenciaSelecionada === 'Fixa (Mensal)') tipoRec = 'fixa';
     if (recorrenciaSelecionada === 'Parcelada') tipoRec = 'parcelada';
 
-    // Se for parcelada, mas não digitaram o número, usamos 1 por defeito
-    const numParcelas = tipoRec === 'parcelada' ? (parseInt(totalParcelas) || 1) : undefined;
+    let categoriaFinal = categoriaSelecionada;
+    if (categoriaSelecionada === 'Outros') {
+      if (novaCategoria.trim() === '') {
+        alert("Por favor, digite o nome da nova categoria.");
+        setCarregando(false);
+        return;
+      }
+      categoriaFinal = novaCategoria.trim();
+      try {
+        await addDoc(collection(db, 'categorias'), {
+          nome: categoriaFinal,
+          tipo: tipo,
+          criadoEm: new Date().toISOString()
+        });
+      } catch (e) {}
+    }
 
-    // 4. Construir o Objeto Exato
-    const novoLancamento: Lancamento = {
-      uid: auth?.currentUser?.uid || 'usuario-anonimo', // Adicionado fallback caso o auth não esteja pronto
+    // Identificador único para agrupar as parcelas/meses
+    const grupoId = Date.now().toString();
+
+    const novoLancamento: any = {
+      uid: auth?.currentUser?.uid || 'usuario-anonimo',
       tipo: tipo,
       descricao: descricao,
       valor: valorNumerico,
-      categoria: categoriaSelecionada, 
+      categoria: categoriaFinal,
       contaBancaria: contaSelecionada,
-      
       status: estaPago ? 'pago' : 'pendente', 
       dataVencimento: dataVencimento,
       dataPagamento: estaPago ? dataPagamento : null, 
-      
       recorrencia: tipoRec,
-      totalParcelas: numParcelas,
-      parcelaAtual: tipoRec === 'parcelada' ? 1 : undefined,
-
-      // Se não houver link ou observação, envia um texto vazio
+      grupoRecorrenciaId: grupoId, // Agrupa lançamentos projetados
       linkComprovante: linkComprovante || '',
       observacoes: observacoes || '',
       dataCriacao: new Date().toISOString()
     };
 
-    console.log("A enviar para o Firebase:", novoLancamento);
+    if (tipoRec === 'parcelada') {
+      novoLancamento.totalParcelas = parseInt(totalParcelas) || 1;
+      // Começa sempre na parcela 1 na base de dados
+      novoLancamento.parcelaAtual = 1;
+    }
 
-    // 5. O Envio
     try {
-      await addDoc(collection(db, 'lancamentos'), novoLancamento);
-      console.log("Sucesso absoluto!");
+      await addDoc(collection(db, 'lancamentos'), novoLancamento as Lancamento);
       router.back(); 
     } catch (erro) {
-      console.error("ERRO DO FIREBASE:", erro); 
-      alert("Erro ao guardar o lançamento. Olha o Console para veres o motivo.");
+      alert("Erro ao guardar o lançamento.");
       setCarregando(false);
     }
   };
@@ -105,9 +176,34 @@ function NovoLancamentoScreen() {
   const mudarTipo = (novoTipo: TipoLancamento) => {
     setTipo(novoTipo);
     setCategoriaSelecionada('Outros');
+    setNovaCategoria('');
   };
 
-  const categoriasDisponiveis = tipo === 'receita' ? CATEGORIAS_RECEITA : CATEGORIAS_DESPESA;
+  // Funções auxiliares para o calendário
+  const converterParaDataObj = (dataStr: string) => {
+    if (!dataStr) return new Date();
+    const partes = dataStr.split('/');
+    if (partes.length !== 3) return new Date();
+    return new Date(Number(partes[2]), Number(partes[1]) - 1, Number(partes[0]));
+  };
+
+  const formatarParaWeb = (dataStr: string) => {
+    if (!dataStr) return '';
+    const partes = dataStr.split('/');
+    if (partes.length !== 3) return '';
+    return `${partes[2]}-${partes[1]}-${partes[0]}`; // YYYY-MM-DD
+  };
+
+  const lerDataWeb = (dataStrWeb: string) => {
+    if (!dataStrWeb) return '';
+    const partes = dataStrWeb.split('-');
+    if (partes.length !== 3) return '';
+    return `${partes[2]}/${partes[1]}/${partes[0]}`; // DD/MM/AAAA
+  };
+
+  const basePadrao = tipo === 'receita' ? CATEGORIAS_RECEITA_PADRAO : CATEGORIAS_DESPESA_PADRAO;
+  const nomesFirebase = categoriasFirebase.map(c => c.nome);
+  const categoriasExibicao = Array.from(new Set([...basePadrao, ...nomesFirebase, 'Outros']));
 
   return (
     <ThemedView style={styles.container}>
@@ -137,16 +233,39 @@ function NovoLancamentoScreen() {
           <TextInput style={styles.input} placeholder="Ex: Conta de Luz (CPFL)" placeholderTextColor="#999" value={descricao} onChangeText={setDescricao} />
 
           <ThemedText style={styles.label}>Valor (R$)</ThemedText>
-          <TextInput style={styles.input} placeholder="0,00" placeholderTextColor="#999" value={valor} onChangeText={setValor} keyboardType="numeric" />
+          <TextInput 
+            style={styles.input} 
+            placeholder="0,00" 
+            placeholderTextColor="#999" 
+            value={valor} 
+            onChangeText={aplicarMascaraMoeda} // ATUALIZADO AQUI
+            keyboardType="numeric" 
+          />
 
           <ThemedText style={styles.label}>Categoria</ThemedText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollHorizontal}>
-            {categoriasDisponiveis.map((cat) => (
-              <TouchableOpacity key={cat} style={[styles.chip, categoriaSelecionada === cat ? styles.chipAtivo : null]} onPress={() => setCategoriaSelecionada(cat)}>
-                <Text style={categoriaSelecionada === cat ? styles.textoBranco : styles.textoEscuro}>{cat}</Text>
-              </TouchableOpacity>
-            ))}
+            {categoriasExibicao.map((cat) => {
+              const isCustom = categoriasFirebase.find(c => c.nome === cat);
+              return (
+                <TouchableOpacity key={cat} style={[styles.chip, categoriaSelecionada === cat ? styles.chipAtivo : null]} onPress={() => setCategoriaSelecionada(cat)}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={categoriaSelecionada === cat ? styles.textoBranco : styles.textoEscuro}>{cat}</Text>
+                    {isCustom && (
+                      <TouchableOpacity style={styles.botaoApagarCategoria} onPress={() => confirmarDeletarCategoria(cat)}>
+                        <Text style={{ color: categoriaSelecionada === cat ? '#ffcccc' : '#ff4444', fontWeight: 'bold' }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              )
+            })}
           </ScrollView>
+
+          {categoriaSelecionada === 'Outros' && (
+            <View style={{ marginBottom: 15, marginTop: -5 }}>
+              <TextInput style={styles.input} placeholder="Qual o nome da nova categoria?" placeholderTextColor="#999" value={novaCategoria} onChangeText={setNovaCategoria} />
+            </View>
+          )}
 
           <ThemedText style={styles.label}>Conta Bancária / Origem</ThemedText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollHorizontal}>
@@ -160,7 +279,35 @@ function NovoLancamentoScreen() {
           <View style={styles.row}>
             <View style={{ flex: 1, marginRight: 10 }}>
               <ThemedText style={styles.label}>Vencimento</ThemedText>
-              <TextInput style={styles.input} placeholder="DD/MM/AAAA" placeholderTextColor="#999" value={dataVencimento} onChangeText={setDataVencimento} />
+              
+              {/* CAMPO DE DATA: Deteta se é PC ou Telemóvel */}
+              {Platform.OS === 'web' ? (
+                <input 
+                  type="date" 
+                  value={formatarParaWeb(dataVencimento)} 
+                  onChange={(e) => setDataVencimento(lerDataWeb(e.target.value))}
+                  style={{ backgroundColor: '#f9f9f9', border: '1px solid #ddd', padding: '14px', borderRadius: '8px', fontSize: '16px', color: '#333', width: '100%', outline: 'none', boxSizing: 'border-box' }}
+                />
+              ) : (
+                <TouchableOpacity onPress={() => setMostrarCalendarioVenc(true)}>
+                  <View style={[styles.input, { justifyContent: 'center' }]}>
+                    <Text style={{ color: dataVencimento ? '#333' : '#999', fontSize: 16 }}>{dataVencimento || 'DD/MM/AAAA'}</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {mostrarCalendarioVenc && Platform.OS !== 'web' && (
+                <DateTimePicker
+                  value={converterParaDataObj(dataVencimento)}
+                  mode="date"
+                  display="default"
+                  onChange={(event, selectedDate) => {
+                    setMostrarCalendarioVenc(false);
+                    if (selectedDate) setDataVencimento(selectedDate.toLocaleDateString('pt-BR'));
+                  }}
+                />
+              )}
+
             </View>
             <View style={{ flex: 1, marginLeft: 10 }}>
               <ThemedText style={styles.label}>Situação</ThemedText>
@@ -173,7 +320,35 @@ function NovoLancamentoScreen() {
           {estaPago ? (
             <View>
               <ThemedText style={styles.label}>Data do Pagamento Efetivo</ThemedText>
-              <TextInput style={styles.input} placeholder="DD/MM/AAAA" placeholderTextColor="#999" value={dataPagamento} onChangeText={setDataPagamento} />
+              
+              {/* CAMPO DE DATA: Deteta se é PC ou Telemóvel */}
+              {Platform.OS === 'web' ? (
+                <input 
+                  type="date" 
+                  value={formatarParaWeb(dataPagamento)} 
+                  onChange={(e) => setDataPagamento(lerDataWeb(e.target.value))}
+                  style={{ backgroundColor: '#f9f9f9', border: '1px solid #ddd', padding: '14px', borderRadius: '8px', fontSize: '16px', color: '#333', width: '100%', outline: 'none', boxSizing: 'border-box' }}
+                />
+              ) : (
+                <TouchableOpacity onPress={() => setMostrarCalendarioPag(true)}>
+                  <View style={[styles.input, { justifyContent: 'center' }]}>
+                    <Text style={{ color: dataPagamento ? '#333' : '#999', fontSize: 16 }}>{dataPagamento || 'Selecione a data...'}</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {mostrarCalendarioPag && Platform.OS !== 'web' && (
+                <DateTimePicker
+                  value={dataPagamento ? converterParaDataObj(dataPagamento) : new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={(event, selectedDate) => {
+                    setMostrarCalendarioPag(false);
+                    if (selectedDate) setDataPagamento(selectedDate.toLocaleDateString('pt-BR'));
+                  }}
+                />
+              )}
+
             </View>
           ) : null}
 
@@ -211,35 +386,28 @@ function NovoLancamentoScreen() {
   );
 }
 
-export default NovoLancamentoScreen;
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1, paddingHorizontal: 20, paddingTop: 10 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   botaoVoltar: { paddingVertical: 10, width: 60 },
   textoVoltar: { color: '#007AFF', fontSize: 16 },
-  
   formulario: { flex: 1 },
   label: { fontSize: 14, color: '#555', marginBottom: 8, marginTop: 15, fontWeight: 'bold' },
-  input: { backgroundColor: '#f9f9f9', borderWidth: 1, borderColor: '#ddd', padding: 15, borderRadius: 8, fontSize: 16, color: '#333' },
-  
+  input: { backgroundColor: '#f9f9f9', borderWidth: 1, borderColor: '#ddd', padding: 15, borderRadius: 8, fontSize: 16, color: '#333', minHeight: 52 },
   seletorTipo: { flexDirection: 'row', gap: 10 },
   botaoTipo: { flex: 1, padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', alignItems: 'center' },
   botaoReceitaAtivo: { backgroundColor: '#34a853', borderColor: '#34a853' },
   botaoDespesaAtivo: { backgroundColor: '#ea4335', borderColor: '#ea4335' },
-  
   scrollHorizontal: { flexDirection: 'row', marginBottom: 10 },
   chip: { paddingHorizontal: 15, paddingVertical: 10, borderRadius: 20, backgroundColor: '#f0f0f0', marginRight: 10, borderWidth: 1, borderColor: '#ddd' },
   chipAtivo: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
-  
+  botaoApagarCategoria: { marginLeft: 8, paddingHorizontal: 5 },
   row: { flexDirection: 'row', alignItems: 'center' },
   chipStatus: { padding: 15, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   statusPago: { backgroundColor: '#34a853' },
   statusPendente: { backgroundColor: '#fbbc05' },
-  
   textoBranco: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   textoEscuro: { color: '#555', fontSize: 14 },
-
   rodape: { paddingVertical: 20, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }
 });

@@ -1,7 +1,9 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore"; // Ferramenta do Banco de Dados
+import { getAuth, getReactNativePersistence, initializeAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
+import { Platform } from 'react-native'; // NOVO: Ferramenta para detetar o dispositivo
 
-// As tuas chaves secretas do Património Inteligente
 const firebaseConfig = {
   apiKey: "AIzaSyCNNngR92NtUyPeyR-_9hNYzKIYeQ2xW_c",
   authDomain: "patrimonio-inteligente-7a056.firebaseapp.com",
@@ -11,8 +13,20 @@ const firebaseConfig = {
   appId: "1:457249894382:web:a637d0d4d7368c79cf28ff"
 };
 
-// Inicializa a ligação ao Firebase
 const app = initializeApp(firebaseConfig);
-
-// Exporta o banco de dados para podermos gravar as despesas/receitas noutros ecrãs
 export const db = getFirestore(app);
+
+// O nosso porteiro agora é inteligente: adapta-se ao telemóvel e à Web
+let authParaExportar;
+
+if (Platform.OS === 'web') {
+  // Se estivermos a testar no navegador do computador (tecla 'w')
+  authParaExportar = getAuth(app); 
+} else {
+  // Se estivermos a testar no telemóvel (Expo Go)
+  authParaExportar = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage)
+  });
+}
+
+export const auth = authParaExportar;

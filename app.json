@@ -21,7 +21,12 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "Patrimônio Inteligente",
+      "shortName": "Patrimônio",
+      "display": "standalone",
+      "backgroundColor": "#ffffff",
+      "themeColor": "#208AEF"
     },
     "plugins": [
       "expo-router",

@@ -4,7 +4,7 @@ import { ActivityIndicator, Button, Platform, ScrollView, StyleSheet, Text, Text
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { TipoLancamento, TipoRecorrencia } from '@/types/lancamento';
-import { addDoc, collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../../firebaseConfig';
 
 import { ThemedText } from '@/components/themed-text';
@@ -13,19 +13,17 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 
 const CATEGORIAS_RECEITA_PADRAO = ['Salário', 'Vendas', 'Investimentos'];
 const CATEGORIAS_DESPESA_PADRAO = ['Alimentação', 'Moradia', 'Transporte', 'Saúde', 'Lazer', 'Impostos'];
-const CONTAS_BANCARIAS = ['Carteira', 'Nubank', 'Itaú', 'Inter', 'Bradesco'];
 const RECORRENCIAS = ['Nenhuma', 'Fixa (Mensal)', 'Parcelada'];
 
 export default function EditarLancamentoScreen() {
   const { id } = useLocalSearchParams();
   
-  // LÓGICA DE IDENTIFICAÇÃO DE PROJEÇÃO
   const idString = (id as string) || '';
   const partesId = idString.split('_proj_');
   const isProj = partesId.length > 1;
   const idReal = partesId[0];
 
-  const [baseLancamento, setBaseLancamento] = useState<any>(null); // Guarda a raiz
+  const [baseLancamento, setBaseLancamento] = useState<any>(null); 
 
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [carregandoSalvar, setCarregandoSalvar] = useState(false);
@@ -34,11 +32,16 @@ export default function EditarLancamentoScreen() {
   const [descricao, setDescricao] = useState('');
   const [valor, setValor] = useState('');
   
+  const [detalhes, setDetalhes] = useState<any[]>([]);
+
   const [categoriaSelecionada, setCategoriaSelecionada] = useState('Outros');
   const [novaCategoria, setNovaCategoria] = useState('');
   const [categoriasFirebase, setCategoriasFirebase] = useState<any[]>([]);
   
+  // NOVO: Estado para as contas bancárias dinâmicas
+  const [contasFirebase, setContasFirebase] = useState<any[]>([]);
   const [contaSelecionada, setContaSelecionada] = useState('Carteira');
+  
   const [dataVencimento, setDataVencimento] = useState('');
   const [dataPagamento, setDataPagamento] = useState('');
   const [estaPago, setEstaPago] = useState(true);
@@ -63,6 +66,20 @@ export default function EditarLancamentoScreen() {
     buscarCategorias();
   }, [tipo]);
 
+  // NOVO: Lê as contas da base de dados em tempo real
+  useEffect(() => {
+    const uid = auth?.currentUser?.uid || 'usuario-anonimo';
+    const q = query(collection(db, 'contas'), where('uid', '==', uid));
+    const unsub = onSnapshot(q, (snap) => {
+      const accs = snap.docs.map(d => ({ id: d.id, nome: d.data().nome }));
+      if(accs.length === 0) {
+        accs.push({ id: 'padrao', nome: 'Carteira' });
+      }
+      setContasFirebase(accs);
+    });
+    return () => unsub();
+  }, []);
+
   useEffect(() => {
     const buscarLancamento = async () => {
       if (!idReal) return;
@@ -81,6 +98,16 @@ export default function EditarLancamentoScreen() {
           setLinkComprovante(dados.linkComprovante || '');
           setObservacoes(dados.observacoes || '');
 
+          if (dados.detalhes && dados.detalhes.length > 0) {
+            const detalhesCarregados = dados.detalhes.map((d: any, index: number) => {
+              let valorDecimal = d.valor.toFixed(2);
+              let valorForm = valorDecimal.replace('.', ',');
+              valorForm = valorForm.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1.');
+              return { id: Date.now().toString() + index, descricao: d.descricao, valor: valorForm, categoria: d.categoria };
+            });
+            setDetalhes(detalhesCarregados);
+          }
+
           const eCategoriaPadrao = CATEGORIAS_RECEITA_PADRAO.includes(dados.categoria) || CATEGORIAS_DESPESA_PADRAO.includes(dados.categoria);
           setCategoriaSelecionada(dados.categoria);
 
@@ -92,12 +119,10 @@ export default function EditarLancamentoScreen() {
             setRecorrenciaSelecionada('Nenhuma');
           }
 
-          // MAGIA AQUI: Se for uma projeção, a tela carrega a data futura e desmarca o "Pago"
           if (isProj) {
             const mesProj = parseInt(partesId[1].split('_')[0]);
             const anoProj = parseInt(partesId[1].split('_')[1]);
             const diaVenc = dados.dataVencimento.split('/')[0];
-            
             setDataVencimento(`${diaVenc}/${String(mesProj + 1).padStart(2, '0')}/${anoProj}`);
             setEstaPago(false);
             setDataPagamento('');
@@ -116,6 +141,21 @@ export default function EditarLancamentoScreen() {
     buscarLancamento();
   }, [idReal]);
 
+  useEffect(() => {
+    if (detalhes.length > 0) {
+      const soma = detalhes.reduce((acc, d) => {
+        let valLimpo = d.valor.replace(/\./g, '').replace(',', '.');
+        let valNum = parseFloat(valLimpo) || 0;
+        return acc + valNum;
+      }, 0);
+      
+      let vDec = soma.toFixed(2);
+      let vForm = vDec.replace('.', ',');
+      vForm = vForm.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1.');
+      setValor(vForm);
+    }
+  }, [detalhes]);
+
   const aplicarMascaraMoeda = (texto: string) => {
     let apenasNumeros = texto.replace(/\D/g, '');
     if (apenasNumeros === '') {
@@ -127,12 +167,42 @@ export default function EditarLancamentoScreen() {
     setValor(valorFormatado);
   };
 
+  const adicionarDetalhe = () => {
+    setDetalhes([...detalhes, { id: Date.now().toString(), descricao: '', valor: '', categoria: '' }]);
+  };
+
+  const removerDetalhe = (id: string) => {
+    setDetalhes(detalhes.filter(d => d.id !== id));
+  };
+
+  const atualizarDetalhe = (id: string, campo: string, texto: string) => {
+    setDetalhes(detalhes.map(d => {
+      if (d.id === id) {
+        if (campo === 'valor') {
+          let apenasNumeros = texto.replace(/\D/g, '');
+          if (apenasNumeros === '') return { ...d, valor: '' };
+          let vDec = (parseInt(apenasNumeros, 10) / 100).toFixed(2);
+          let vForm = vDec.replace('.', ',');
+          vForm = vForm.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1.');
+          return { ...d, valor: vForm };
+        }
+        return { ...d, [campo]: texto };
+      }
+      return d;
+    }));
+  };
+
   const salvarEdicao = async () => {
     if (descricao === '' || valor === '') {
       alert("Por favor, preencha a descrição e o valor."); return;
     }
     if (estaPago && dataPagamento === '') {
       alert("Por favor, preencha a Data do Pagamento ou desmarque 'Pago'."); return;
+    }
+
+    if (detalhes.length > 0) {
+      const temVazio = detalhes.some(d => d.descricao === '' || d.valor === '' || d.categoria === '');
+      if (temVazio) { alert("Preencha todos os campos do detalhamento ou remova a linha vazia."); return; }
     }
 
     setCarregandoSalvar(true);
@@ -157,11 +227,17 @@ export default function EditarLancamentoScreen() {
       categoriaFinal = novaCategoria.trim();
     }
 
+    const detalhesParaSalvar = detalhes.map(d => {
+      let vLimpo = d.valor.replace(/\./g, '').replace(',', '.');
+      return { descricao: d.descricao, valor: parseFloat(vLimpo) || 0, categoria: d.categoria };
+    });
+
     const dadosAtualizados: any = {
       tipo: tipo,
       descricao: descricao,
       valor: valorNumerico,
       categoria: categoriaFinal,
+      detalhes: detalhesParaSalvar.length > 0 ? detalhesParaSalvar : null,
       contaBancaria: contaSelecionada,
       status: estaPago ? 'pago' : 'pendente', 
       dataVencimento: dataVencimento,
@@ -177,11 +253,9 @@ export default function EditarLancamentoScreen() {
 
     try {
       if (!isProj) {
-        // Se a pessoa clicou no lançamento original, altera tudo normalmente
         const docRef = doc(db, 'lancamentos', idReal);
         await updateDoc(docRef, dadosAtualizados);
       } else {
-        // SE FOR PROJEÇÃO: Divide o histórico (A MÁGICA FINAL!)
         const mesProj = parseInt(partesId[1].split('_')[0]);
         const anoProj = parseInt(partesId[1].split('_')[1]);
         const partesBase = baseLancamento.dataVencimento.split('/');
@@ -190,7 +264,6 @@ export default function EditarLancamentoScreen() {
         
         const diferencaMeses = (anoProj - baseAno) * 12 + (mesProj - baseMes);
 
-        // 1. Encerra a recorrência original no mês passado
         const updateOriginal: any = {
           recorrencia: 'parcelada',
           totalParcelas: baseLancamento.recorrencia === 'parcelada' 
@@ -200,7 +273,6 @@ export default function EditarLancamentoScreen() {
         if (baseLancamento.recorrencia !== 'parcelada') updateOriginal.parcelaAtual = 1;
         await updateDoc(doc(db, 'lancamentos', idReal), updateOriginal);
 
-        // 2. Cria o NOVO lançamento raiz a partir deste mês
         if (tipoRec === 'parcelada') {
           dadosAtualizados.parcelaAtual = baseLancamento.recorrencia === 'parcelada'
             ? (baseLancamento.parcelaAtual || 1) + diferencaMeses
@@ -256,6 +328,14 @@ export default function EditarLancamentoScreen() {
   }
   const categoriasExibicao = Array.from(new Set(todasCats));
 
+  // NOVO: Assegura que a conta gravada no banco aparece na lista, mesmo se foi apagada
+  const nomesContas = contasFirebase.map(c => c.nome);
+  const todasContas = [...nomesContas];
+  if (contaSelecionada && !todasContas.includes(contaSelecionada)) {
+    todasContas.push(contaSelecionada);
+  }
+  const contasExibicao = Array.from(new Set(todasContas));
+
   if (carregandoDados) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -289,13 +369,10 @@ export default function EditarLancamentoScreen() {
             </TouchableOpacity>
           </View>
 
-          <ThemedText style={styles.label}>Descrição</ThemedText>
-          <TextInput style={styles.input} placeholder="Ex: Conta de Luz (CPFL)" placeholderTextColor="#999" value={descricao} onChangeText={setDescricao} />
+          <ThemedText style={styles.label}>Descrição Geral</ThemedText>
+          <TextInput style={styles.input} placeholder="Ex: Fatura Cartão de Crédito" placeholderTextColor="#999" value={descricao} onChangeText={setDescricao} />
 
-          <ThemedText style={styles.label}>Valor (R$)</ThemedText>
-          <TextInput style={styles.input} placeholder="0,00" placeholderTextColor="#999" value={valor} onChangeText={aplicarMascaraMoeda} keyboardType="numeric" />
-
-          <ThemedText style={styles.label}>Categoria</ThemedText>
+          <ThemedText style={styles.label}>Categoria Geral</ThemedText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollHorizontal}>
             {categoriasExibicao.map((cat) => {
               return (
@@ -314,9 +391,63 @@ export default function EditarLancamentoScreen() {
             </View>
           )}
 
-          <ThemedText style={styles.label}>Conta Bancária / Origem</ThemedText>
+          <ThemedText style={styles.label}>Valor Total (R$)</ThemedText>
+          <TextInput 
+            style={[styles.input, detalhes.length > 0 && { backgroundColor: '#e9ecef', color: '#666' }]} 
+            placeholder="0,00" 
+            placeholderTextColor="#999" 
+            value={valor} 
+            onChangeText={aplicarMascaraMoeda} 
+            keyboardType="numeric" 
+            editable={detalhes.length === 0} 
+          />
+          {detalhes.length > 0 && <Text style={styles.textoAviso}>Valor calculado automaticamente pelos itens abaixo.</Text>}
+
+          {detalhes.length > 0 && (
+            <View style={styles.boxDetalhes}>
+              <ThemedText style={{fontWeight: 'bold', marginBottom: 15, color: '#333'}}>Itens Desmembrados:</ThemedText>
+              {detalhes.map((det, index) => (
+                <View key={det.id} style={styles.linhaDetalhe}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <Text style={{fontWeight: 'bold', color: '#555'}}>Item {index + 1}</Text>
+                    <TouchableOpacity onPress={() => removerDetalhe(det.id)}>
+                      <Text style={{color: '#ff4444', fontWeight: 'bold'}}>✕ Remover</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput style={[styles.input, {marginBottom: 8, padding: 10, minHeight: 45}]} placeholder="O que comprou? (Ex: Gasolina)" placeholderTextColor="#999" value={det.descricao} onChangeText={(txt) => atualizarDetalhe(det.id, 'descricao', txt)} />
+                  
+                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 8 }}>
+                    <TextInput style={[styles.input, {flex: 1, padding: 10, minHeight: 45}]} placeholder="Valor (R$)" placeholderTextColor="#999" keyboardType="numeric" value={det.valor} onChangeText={(txt) => atualizarDetalhe(det.id, 'valor', txt)} />
+                    <TextInput style={[styles.input, {flex: 1, padding: 10, minHeight: 45}]} placeholder="Categoria" placeholderTextColor="#999" value={det.categoria} onChangeText={(txt) => atualizarDetalhe(det.id, 'categoria', txt)} />
+                  </View>
+
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 5 }}>
+                    {categoriasExibicao.filter(c => c !== 'Outros').map((cat) => (
+                      <TouchableOpacity key={cat} style={[styles.chipPequeno, det.categoria === cat ? styles.chipPequenoAtivo : null]} onPress={() => atualizarDetalhe(det.id, 'categoria', cat)}>
+                        <Text style={det.categoria === cat ? styles.textoPequenoAtivo : styles.textoPequeno}>{cat}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  
+                </View>
+              ))}
+            </View>
+          )}
+
+          <TouchableOpacity style={styles.botaoDetalhe} onPress={adicionarDetalhe}>
+            <Text style={styles.textoBotaoDetalhe}>+ Adicionar Detalhamento (Opcional)</Text>
+          </TouchableOpacity>
+
+          {/* NOVO: Atualizado para refletir o Gerir Contas */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15, marginBottom: 8 }}>
+            <ThemedText style={[styles.label, { marginTop: 0, marginBottom: 0 }]}>Conta Bancária / Origem</ThemedText>
+            <TouchableOpacity onPress={() => router.push('/gerir-contas')}>
+              <Text style={{ color: '#007AFF', fontWeight: 'bold' }}>⚙️ Gerir Contas</Text>
+            </TouchableOpacity>
+          </View>
+
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollHorizontal}>
-            {CONTAS_BANCARIAS.map((conta) => (
+            {contasExibicao.map((conta) => (
               <TouchableOpacity key={conta} style={[styles.chip, contaSelecionada === conta ? styles.chipAtivo : null]} onPress={() => setContaSelecionada(conta)}>
                 <Text style={contaSelecionada === conta ? styles.textoBranco : styles.textoEscuro}>{conta}</Text>
               </TouchableOpacity>
@@ -415,6 +546,18 @@ const styles = StyleSheet.create({
   scrollHorizontal: { flexDirection: 'row', marginBottom: 10 },
   chip: { paddingHorizontal: 15, paddingVertical: 10, borderRadius: 20, backgroundColor: '#f0f0f0', marginRight: 10, borderWidth: 1, borderColor: '#ddd' },
   chipAtivo: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
+  
+  botaoDetalhe: { backgroundColor: '#e3f2fd', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 10, marginBottom: 10, borderWidth: 1, borderColor: '#90caf9' },
+  textoBotaoDetalhe: { color: '#1976d2', fontWeight: 'bold' },
+  boxDetalhes: { backgroundColor: '#f8f9fa', padding: 15, borderRadius: 10, borderWidth: 1, borderColor: '#e9ecef', marginTop: 10 },
+  linhaDetalhe: { marginBottom: 15, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: '#ddd' },
+  textoAviso: { fontSize: 12, color: '#666', marginTop: 4, marginLeft: 2 },
+
+  chipPequeno: { backgroundColor: '#e9ecef', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, marginRight: 8, borderWidth: 1, borderColor: '#dee2e6' },
+  chipPequenoAtivo: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
+  textoPequeno: { fontSize: 12, color: '#495057' },
+  textoPequenoAtivo: { fontSize: 12, color: '#fff', fontWeight: 'bold' },
+
   row: { flexDirection: 'row', alignItems: 'center' },
   chipStatus: { padding: 15, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   statusPago: { backgroundColor: '#34a853' },

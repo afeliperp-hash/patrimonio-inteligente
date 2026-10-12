@@ -72,7 +72,7 @@ export default function PainelScreen() {
       else if (item.recorrencia === 'fixa' && diferencaMeses > 0) {
         listaProjetada.push({ 
           ...item, 
-          id: `${item.id}_proj_${mesFiltro}_${anoFiltro}`, // ID VIRTUAL
+          id: `${item.id}_proj_${mesFiltro}_${anoFiltro}`,
           dataVencimento: `${diaVencimento}/${String(mesFiltro + 1).padStart(2, '0')}/${anoFiltro}`,
           status: 'pendente',
           dataPagamento: null 
@@ -83,7 +83,7 @@ export default function PainelScreen() {
         if (parcelaAtualProjetada <= item.totalParcelas) {
           listaProjetada.push({ 
             ...item, 
-            id: `${item.id}_proj_${mesFiltro}_${anoFiltro}`, // ID VIRTUAL
+            id: `${item.id}_proj_${mesFiltro}_${anoFiltro}`,
             dataVencimento: `${diaVencimento}/${String(mesFiltro + 1).padStart(2, '0')}/${anoFiltro}`,
             parcelaAtual: parcelaAtualProjetada,
             descricao: `${item.descricao} (${parcelaAtualProjetada}/${item.totalParcelas})`,
@@ -113,7 +113,6 @@ export default function PainelScreen() {
     }
   };
 
-  // NOVO: Lógica inteligente de "Apagar deste mês em diante"
   const apagarLancamento = async (idString: string, nomeDaConta: string) => {
     const partesId = idString.split('_proj_');
     const isProj = partesId.length > 1;
@@ -138,7 +137,6 @@ export default function PainelScreen() {
             const baseAno = parseInt(partesBase[2]);
             const diferencaMeses = (anoProj - baseAno) * 12 + (mesProj - baseMes);
 
-            // Transforma o antigo em parcelado e encerra ele no mês anterior
             const updateOriginal: any = {
               recorrencia: 'parcelada',
               totalParcelas: baseItem.recorrencia === 'parcelada' 
@@ -168,16 +166,23 @@ export default function PainelScreen() {
   };
 
   const consultarLancamento = (item: any) => {
-    const msg = `Detalhes:\nValor: R$ ${item.valor}\nVencimento: ${item.dataVencimento}\nCategoria: ${item.categoria}\nObservações: ${item.observacoes || 'Nenhuma'}`;
+    let msg = `Detalhes Gerais:\nValor Total: R$ ${item.valor.toFixed(2).replace('.', ',')}\nVencimento: ${item.dataVencimento}\nCategoria: ${item.categoria}\nObservações: ${item.observacoes || 'Nenhuma'}`;
+    
+    if (item.detalhes && item.detalhes.length > 0) {
+      msg += `\n\n--- ITENS DESMEMBRADOS ---\n`;
+      item.detalhes.forEach((d: any) => {
+        msg += `• ${d.descricao} | R$ ${d.valor.toFixed(2).replace('.', ',')} | ${d.categoria}\n`;
+      });
+    }
+
     if (Platform.OS === 'web') {
       window.alert(msg);
     } else {
-      Alert.alert("Consultar", msg);
+      Alert.alert("Consultar Lançamento", msg);
     }
   };
 
   const editarLancamento = (item: any) => {
-    // Agora enviamos o ID completo de volta para a tela de edição saber se é projeção ou raiz
     router.push(`/editar/${item.id}` as any);
   };
 
@@ -210,8 +215,11 @@ export default function PainelScreen() {
       <SafeAreaView style={styles.safeArea}>
         
         <View style={styles.header}>
-          <ThemedText type="title">Visão Geral</ThemedText>
-          <Button title="Sair" onPress={fazerLogout} color="#ff4444" />
+          {/* Título com tamanho controlado e não gigantesco */}
+          <Text style={styles.tituloPrincipal}>Visão Geral</Text>
+          <View style={{ borderRadius: 8, overflow: 'hidden' }}>
+            <Button title="Sair" onPress={fazerLogout} color="#ff4444" />
+          </View>
         </View>
 
         <View style={styles.seletorMes}>
@@ -242,7 +250,7 @@ export default function PainelScreen() {
           </View>
         </View>
 
-        <ThemedText type="subtitle" style={styles.tituloExtrato}>Recentes</ThemedText>
+        <ThemedText style={styles.tituloExtrato}>Recentes</ThemedText>
         
         <FlatList
           data={lancamentosFiltrados}
@@ -255,7 +263,7 @@ export default function PainelScreen() {
             return (
               <View style={[styles.itemLista, { backgroundColor: statusInfo.corFundo, borderColor: statusInfo.corTexto, borderWidth: 1 }]}>
                 <View style={styles.itemInfo}>
-                  <Text style={[styles.itemDescricao, { color: '#000' }]}>{item.descricao}</Text>
+                  <Text style={[styles.itemDescricao, { color: '#000' }]} numberOfLines={1}>{item.descricao}</Text>
                   <Text style={[styles.itemDetalhes, { color: statusInfo.corTexto }]}>
                     Vence em: {item.dataVencimento || 'N/A'} • {statusInfo.texto}
                   </Text>
@@ -283,7 +291,21 @@ export default function PainelScreen() {
         />
 
         <View style={styles.acoes}>
-          <Button title="+ NOVO LANÇAMENTO" onPress={() => router.push('/novo-lancamento')} />
+          {/* Botão Novo Lançamento ocupando a largura total */}
+          <TouchableOpacity style={styles.botaoPrimario} onPress={() => router.push('/novo-lancamento' as any)}>
+            <Text style={styles.textoBotaoAcao}>+ NOVO LANÇAMENTO</Text>
+          </TouchableOpacity>
+          
+          {/* Compras e Relatórios lado a lado */}
+          <View style={styles.linhaBotoes}>
+            <TouchableOpacity style={[styles.botaoSecundario, { flex: 1 }]} onPress={() => router.push('/lista-compras' as any)}>
+              <Text style={styles.textoBotaoAcao}>🛒 COMPRAS</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={[styles.botaoRelatorio, { flex: 1 }]} onPress={() => router.push('/relatorios' as any)}>
+              <Text style={styles.textoBotaoAcao}>📊 RELATÓRIOS</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
       </SafeAreaView>
@@ -291,36 +313,54 @@ export default function PainelScreen() {
   );
 }
 
+// ESTILOS TOTALMENTE COMPACTADOS PARA TELEMÓVEL
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safeArea: { flex: 1, padding: 20 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, marginTop: 10 },
-  seletorMes: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
-  botaoMes: { padding: 10, paddingHorizontal: 20 },
-  setaMes: { fontSize: 22, color: '#007AFF', fontWeight: 'bold' },
-  textoMes: { fontSize: 18, fontWeight: 'bold', minWidth: 160, textAlign: 'center' },
-  cartaoSaldo: { alignItems: 'center', padding: 15, backgroundColor: '#f0f4f8', borderRadius: 12, marginBottom: 15 },
-  saldoTitulo: { fontSize: 14, color: '#555', marginBottom: 5 },
-  saldoValor: { fontSize: 30, fontWeight: 'bold' },
-  cardsContainer: { flexDirection: 'row', gap: 15 },
-  card: { flex: 1, padding: 15, borderRadius: 12, alignItems: 'center' },
+  safeArea: { flex: 1, paddingHorizontal: 15, paddingTop: 5 },
+  
+  // Cabeçalho mais elegante e não gigante
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
+  tituloPrincipal: { fontSize: 24, fontWeight: 'bold', color: '#111' },
+  
+  seletorMes: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  botaoMes: { padding: 5, paddingHorizontal: 15 },
+  setaMes: { fontSize: 20, color: '#007AFF', fontWeight: 'bold' },
+  textoMes: { fontSize: 16, fontWeight: 'bold', minWidth: 140, textAlign: 'center' },
+  
+  // Cartões mais compactos (Padding de 15 para 10)
+  cartaoSaldo: { alignItems: 'center', padding: 10, backgroundColor: '#f0f4f8', borderRadius: 10, marginBottom: 10 },
+  saldoTitulo: { fontSize: 12, color: '#555', marginBottom: 2 },
+  saldoValor: { fontSize: 24, fontWeight: 'bold' },
+  
+  cardsContainer: { flexDirection: 'row', gap: 10 },
+  card: { flex: 1, padding: 10, borderRadius: 10, alignItems: 'center' },
   cardReceita: { backgroundColor: '#e6f4ea' },
   cardDespesa: { backgroundColor: '#fce8e6' },
-  cardTitulo: { fontSize: 13, color: '#555', marginBottom: 5 },
-  cardValorPequeno: { fontSize: 18, fontWeight: 'bold', color: '#111' },
-  tituloExtrato: { marginTop: 25, marginBottom: 10, fontSize: 18 },
+  cardTitulo: { fontSize: 12, color: '#555', marginBottom: 2 },
+  cardValorPequeno: { fontSize: 16, fontWeight: 'bold', color: '#111' },
+  
+  tituloExtrato: { marginTop: 15, marginBottom: 8, fontSize: 16, fontWeight: 'bold' },
+  
   lista: { flex: 1 },
-  itemLista: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, borderRadius: 10, marginBottom: 10 },
-  itemInfo: { flex: 1 },
-  itemDescricao: { fontSize: 16, fontWeight: 'bold' },
-  itemDetalhes: { fontSize: 13, marginTop: 4, marginBottom: 4, fontWeight: '600' },
-  itemValor: { fontSize: 16, fontWeight: 'bold' },
+  // Lista compacta (padding 10, margins menores)
+  itemLista: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderRadius: 8, marginBottom: 8 },
+  itemInfo: { flex: 1, paddingRight: 5 },
+  itemDescricao: { fontSize: 15, fontWeight: 'bold' },
+  itemDetalhes: { fontSize: 12, marginTop: 2, marginBottom: 2, fontWeight: '600' },
+  itemValor: { fontSize: 15, fontWeight: 'bold' },
   textoReceita: { color: '#28a745' },
   textoDespesa: { color: '#dc3545' },
-  itemAcoes: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  botaoAcao: { padding: 5 },
+  
+  itemAcoes: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  botaoAcao: { padding: 4 },
   iconeAcao: { fontSize: 18 },
-  textoApagar: { color: '#ff4444', fontSize: 20, fontWeight: 'bold' },
+  textoApagar: { color: '#ff4444', fontSize: 18, fontWeight: 'bold' },
+  
   listaVazia: { textAlign: 'center', color: '#999', marginTop: 20 },
-  acoes: { marginTop: 15, marginBottom: 20 }
+  acoes: { marginTop: 10, marginBottom: 15, gap: 10 },
+  linhaBotoes: { flexDirection: 'row', gap: 10 },
+  botaoPrimario: { backgroundColor: '#007AFF', padding: 12, borderRadius: 8, alignItems: 'center' },
+  botaoSecundario: { backgroundColor: '#34a853', padding: 12, borderRadius: 8, alignItems: 'center' },
+  botaoRelatorio: { backgroundColor: '#ff9500', padding: 12, borderRadius: 8, alignItems: 'center' },
+  textoBotaoAcao: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 });

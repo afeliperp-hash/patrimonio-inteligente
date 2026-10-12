@@ -66,7 +66,7 @@ export default function LoginScreen() {
       <SafeAreaView style={styles.safeArea}>
         
         <ThemedText type="title" style={styles.title}>
-          Património Inteligente
+          Patrimônio Inteligente
         </ThemedText>
         
         <ThemedText style={styles.subtitle}>

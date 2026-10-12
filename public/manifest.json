@@ -3,12 +3,12 @@
   "name": "Patrimônio Inteligente",
   "icons": [
     {
-      "src": "/favicon.png",
+      "src": "/icon.png",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "/favicon.png",
+      "src": "/icon.png",
       "type": "image/png",
       "sizes": "512x512"
     }
